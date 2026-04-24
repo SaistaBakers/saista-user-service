@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+  namespace: dev
+  labels:
+    app: db-migrate
+spec:
+  backoffLimit: 5
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app: db-migrate
+    spec:
+      restartPolicy: OnFailure
+
+      # Wait until MySQL pod is actually accepting connections before migrating
+      initContainers:
+        - name: wait-for-mysql
+          image: busybox:1.35
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for MySQL to accept connections..."
+              until nc -z mysql.dev.svc.cluster.local 3306; do
+                echo "MySQL not ready yet, retrying in 3s..."
+                sleep 3
+              done
+              echo "MySQL is up!"
+
+      containers:
+        - name: db-migrate
+          image: asadoblivion/saista-user-service:latest
+          imagePullPolicy: Always
+          # Override entrypoint — only run migration, not uvicorn
+          command: ["python", "/scripts/migrate_db.py"]
+          volumeMounts:
+            - name: migration-script
+              mountPath: /scripts
+          # Reuse the same ConfigMap and Secret as the user-service Deployment
+          envFrom:
+            - configMapRef:
+                name: user-service-config
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: user-service-secrets
+                  key: DB_PASSWORD
+
+      volumes:
+        - name: migration-script
+          configMap:
+            name: db-migration-script
+            defaultMode: 0755
