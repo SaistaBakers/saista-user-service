@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-service-config
+  namespace: dev
+data:
+  DB_HOST: "mysql.dev.svc.cluster.local"
+  DB_USER: "root"
+  DB_NAME: "saista_bakers"
+  DB_PORT: "3306"

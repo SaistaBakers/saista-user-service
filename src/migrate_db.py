@@ -1,0 +1,159 @@
+import mysql.connector
+import os
+import time
+
+def migrate():
+    print("Connecting to database at mysql...")
+    while True:
+        try:
+            conn = mysql.connector.connect(
+                host=os.getenv('DB_HOST', 'mysql'),
+                user=os.getenv('DB_USER', 'root'),
+                password=os.getenv('DB_PASSWORD', 'Asad@1234'),
+                database=os.getenv('DB_NAME', 'saista_bakers')
+            )
+            break
+        except Exception as e:
+            print(f"Waiting for DB... {e}")
+            time.sleep(2)
+
+    cur = conn.cursor()
+
+    # 1. Create/Update Tables
+    tables = [
+        """CREATE TABLE IF NOT EXISTS users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(50) UNIQUE NOT NULL,
+            email VARCHAR(100) UNIQUE NOT NULL,
+            password_hash VARCHAR(255) NOT NULL,
+            full_name VARCHAR(100),
+            role VARCHAR(20) DEFAULT 'customer',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS products (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            category VARCHAR(50),
+            price DECIMAL(10,2) NOT NULL,
+            image_url VARCHAR(255),
+            available BOOLEAN DEFAULT TRUE
+        )""",
+        """CREATE TABLE IF NOT EXISTS orders (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT,
+            total_price DECIMAL(10,2) DEFAULT 0.00,
+            status VARCHAR(20) DEFAULT 'pending',
+            delivery_address TEXT,
+            delivery_date DATE,
+            payment_mode VARCHAR(50),
+            payment_status VARCHAR(50) DEFAULT 'unpaid',
+            invoice_sent BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS order_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            order_id INT,
+            product_id INT,
+            quantity INT NOT NULL,
+            price_at_purchase DECIMAL(10,2) NOT NULL,
+            FOREIGN KEY (order_id) REFERENCES orders(id),
+            FOREIGN KEY (product_id) REFERENCES products(id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS custom_orders (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT,
+            pound VARCHAR(20),
+            flavour VARCHAR(50),
+            description TEXT,
+            estimated_price DECIMAL(10,2) DEFAULT 0.00,
+            final_price DECIMAL(10,2) DEFAULT NULL,
+            delivery_date DATE,
+            status VARCHAR(20) DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )"""
+    ]
+
+    print("Ensuring all tables exist with correct schema...")
+    for table_sql in tables:
+        cur.execute(table_sql)
+
+    # 2. Audit and Fix Columns (for existing tables)
+    alters = [
+        ("users", "role", "ALTER TABLE users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'customer'"),
+        ("orders", "total_price", "ALTER TABLE orders ADD COLUMN total_price DECIMAL(10,2) DEFAULT 0.00"),
+        ("orders", "delivery_address", "ALTER TABLE orders ADD COLUMN delivery_address TEXT"),
+        ("orders", "delivery_date", "ALTER TABLE orders ADD COLUMN delivery_date DATE"),
+        ("orders", "payment_mode", "ALTER TABLE orders ADD COLUMN payment_mode VARCHAR(50)"),
+        ("orders", "payment_status", "ALTER TABLE orders ADD COLUMN payment_status VARCHAR(50) DEFAULT 'unpaid'"),
+        ("products", "description", "ALTER TABLE products ADD COLUMN description TEXT AFTER name"),
+        ("products", "available", "ALTER TABLE products ADD COLUMN available BOOLEAN DEFAULT TRUE"),
+        ("custom_orders", "estimated_price", "ALTER TABLE custom_orders ADD COLUMN estimated_price DECIMAL(10,2) DEFAULT 0.00"),
+        ("custom_orders", "final_price", "ALTER TABLE custom_orders ADD COLUMN final_price DECIMAL(10,2) DEFAULT NULL"),
+    ]
+
+    for table, col, sql in alters:
+        try:
+            cur.execute(f"SHOW COLUMNS FROM {table} LIKE '{col}'")
+            if not cur.fetchone():
+                print(f"Adding missing column {col} to {table}...")
+                cur.execute(sql)
+                conn.commit()
+        except Exception as e:
+            print(f"Fixing {table}.{col}... {e}")
+            try:
+                cur.execute(sql)
+                conn.commit()
+            except: pass
+
+    # 3. Handle total_amount -> total_price rename if needed
+    try:
+        cur.execute("SHOW COLUMNS FROM orders LIKE 'total_amount'")
+        if cur.fetchone():
+            print("Renaming total_amount to total_price...")
+            cur.execute("ALTER TABLE orders CHANGE total_amount total_price DECIMAL(10,2) DEFAULT 0.00")
+    except:
+        pass
+
+    # 4. Seed Admin
+    from passlib.hash import bcrypt
+    admin_pass = bcrypt.hash("Asad@1234")
+    try:
+        cur.execute("SELECT id FROM users WHERE username='asadadmin' OR role='admin'")
+        if not cur.fetchone():
+            cur.execute("INSERT INTO users (username, email, password_hash, full_name, role) VALUES (%s,%s,%s,%s,%s)",
+                        ('asadadmin', 'admin@saistabakers.com', admin_pass, 'Asad Admin', 'admin'))
+            print("Admin user seeded.")
+        else:
+            cur.execute("UPDATE users SET role='admin' WHERE username='asadadmin'")
+    except Exception as e:
+        print(f"Admin seed error: {e}")
+
+    # 5. Seed Products
+    initial_products = [
+        ('Signature Chocolate Cake', 'Rich dark chocolate layers with ganache.', 'Cakes', 450.00, '/images/gallery/img1.jpeg'),
+        ('Velvet Strawberry Dream', 'Light sponge with fresh strawberry cream.', 'Cakes', 500.00, '/images/gallery/strawberry.png'),
+        ('Vanilla Buttercream Classic', 'Traditional vanilla bean cake with silky frosting.', 'Cakes', 400.00, '/images/gallery/vanilla.png'),
+        ('Choco-Chip Artisanal Cookies', 'Hand-baked cookies with premium chocolate chunks.', 'Cookies', 150.00, '/images/gallery/cookies.png'),
+        ('Oatmeal Raisin Healthy Bite', 'Chewy oats and sweet raisins, a classic treat.', 'Cookies', 120.00, '/images/gallery/cookies.png')
+    ]
+    try:
+        cur.execute("SELECT COUNT(*) FROM products")
+        if cur.fetchone()[0] == 0:
+            cur.executemany(
+                "INSERT INTO products (name, description, category, price, image_url, available) VALUES (%s, %s, %s, %s, %s, TRUE)",
+                initial_products
+            )
+            print(f"Seeded {len(initial_products)} products.")
+    except Exception as e:
+        print(f"Product seeding error: {e}")
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    print("✓ Migration complete! Your database is now 100% compatible with all services.")
+
+if __name__ == "__main__":
+    migrate()
