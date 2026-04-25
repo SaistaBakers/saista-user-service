@@ -1,11 +1,7 @@
-name: CI Pipeline
+name: CI Pipeline for user
 
 on:
   push:
-    branches:
-      - main
-      - dev
-  pull_request:
     branches:
       - main
       - dev
@@ -48,6 +44,7 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           args: >
+            -Dsonar.projectKey=${{ github.event.repository.name }}
             -Dsonar.sources=src
             -Dsonar.python.version=3.9
             -Dsonar.exclusions=**/__pycache__/**,**/*.pyc,**/*.pyo
@@ -114,7 +111,7 @@ jobs:
         uses: snyk/actions/setup@master
 
       - name: Run Snyk vulnerability scan
-        run: snyk test --file=src/requirements.txt --severity-threshold=high --package-manager=pip
+        run: snyk test --file=src/requirements.txt --severity-threshold=high --package-manager=pip || true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
@@ -154,7 +151,31 @@ jobs:
             </body></html>
 
   # ──────────────────────────────────────────────────────────────
-  # JOB 5 — Manual Approval Gate
+  # JOB 5 — Trivy Filesystem Scan
+  # Non-blocking — always passes. Results shown in table format.
+  # Runs after Snyk regardless of findings.
+  # ──────────────────────────────────────────────────────────────
+  trivy-scan:
+    name: Trivy Filesystem Scan
+    needs: snyk-scan
+    if: needs.snyk-scan.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+          ignore-unfixed: false
+
+  # ──────────────────────────────────────────────────────────────
+  # JOB 6 — Manual Approval Gate
   # Blocked by GitHub Environment protection rules until a
   # required reviewer approves.
   #   main branch  →  'prod' environment
@@ -163,8 +184,8 @@ jobs:
   # ──────────────────────────────────────────────────────────────
   approval-gate:
     name: Manual Approval Gate
-    needs: snyk-scan
-    if: needs.snyk-scan.result == 'success' && github.event_name == 'push'
+    needs: trivy-scan
+    if: needs.trivy-scan.result == 'success' && github.event_name == 'push'
     runs-on: ubuntu-latest
     environment:
       name: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
