@@ -1,0 +1,36 @@
+name: 'Send CI Failure Notification'
+description: 'Sends an HTML email notification on CI pipeline failure via Gmail SMTP'
+
+inputs:
+  subject:
+    description: 'Email subject line'
+    required: true
+  body:
+    description: 'HTML email body content'
+    required: true
+  smtp_password:
+    description: 'Gmail App Password for SMTP authentication'
+    required: true
+  smtp_username:
+    description: 'Gmail address to authenticate and send from'
+    required: true
+  recipient:
+    description: 'Recipient email address (passed from SMTP_RECIPIENT org secret)'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Send email notification
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        secure: false
+        username: ${{ inputs.smtp_username }}
+        password: ${{ inputs.smtp_password }}
+        subject: ${{ inputs.subject }}
+        to: ${{ inputs.recipient }}
+        from: CI Pipeline <${{ inputs.smtp_username }}>
+        content_type: text/html
+        body: ${{ inputs.body }}
