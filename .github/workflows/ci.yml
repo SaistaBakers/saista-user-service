@@ -48,6 +48,7 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           args: >
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
             -Dsonar.sources=src
             -Dsonar.python.version=3.9
             -Dsonar.exclusions=**/__pycache__/**,**/*.pyc,**/*.pyo
